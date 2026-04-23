@@ -13,8 +13,8 @@ def get_connection():
         host=os.getenv("DB_HOST", "localhost"),
         port=int(os.getenv("DB_PORT", 5432)),
         dbname=os.getenv("DB_NAME", "avito_db"),
-        user=os.getenv("DB_USER", "avito_user"),
-        password=os.getenv("DB_PASSWORD", "avito_pass"),
+        user=os.getenv("DB_USER", "postgres"),
+        password=os.getenv("DB_PASSWORD"),
     )
 
 

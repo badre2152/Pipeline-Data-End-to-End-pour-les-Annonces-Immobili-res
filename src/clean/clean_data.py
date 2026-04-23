@@ -61,7 +61,7 @@ def _extract_number(text) -> float | None:
             .replace(" ", "")
             .replace(",", ".")
     )
-    m = re.search(r"[\d.]+", text)
+    m = re.search(r"\d+\.?\d*", text)  # ✅ FIX: avoid float("3.5.2") crash
     return float(m.group()) if m else None
 
 
@@ -149,6 +149,9 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
 
     # 6. Remove extreme outliers (1st–99th percentile)
     for col in ["prix", "surface_m2"]:
+        if df[col].notna().sum() < 10:  # ✅ FIX: skip if too few values
+            logger.warning(f"Skipping outlier filter for [{col}] — not enough data")
+            continue
         q_lo = df[col].quantile(0.01)
         q_hi = df[col].quantile(0.99)
         n_before = len(df)
@@ -196,6 +199,13 @@ def _load_to_db(df: pd.DataFrame):
         "nb_chambres", "nb_salles_bain", "etage", "annee_construction",
         "lien", "scraped_at", "prix_par_m2", "age_bien", "categorie_prix",
     ]
+
+    # ✅ FIX: check all columns exist before insert
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        logger.error(f"Missing columns in DataFrame: {missing}")
+        return
+
     sub = df[cols].where(pd.notna(df[cols]), None)
     rows = [tuple(r) for r in sub.itertuples(index=False, name=None)]
     bulk_insert(_INSERT, rows)

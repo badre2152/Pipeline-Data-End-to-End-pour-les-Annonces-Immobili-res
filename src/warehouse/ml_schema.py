@@ -81,6 +81,20 @@ def run_ml_schema(df: pd.DataFrame | None = None):
         df = _fetch_clean()
         logger.info(f"Loaded {len(df)} rows from clean.annonces")
 
+    # ✅ FIX 1: check all columns exist before insert
+    missing = [c for c in _COLS if c not in df.columns]
+    if missing:
+        logger.error(f"Missing columns in DataFrame: {missing}")
+        return
+
+    # ✅ FIX 2: check target variable (prix) is not all NULL
+    null_prix = df["prix"].isna().sum()
+    total     = len(df)
+    logger.info(f"Target variable (prix): {total - null_prix}/{total} valid values")
+    if null_prix == total:
+        logger.error("All prix values are NULL — feature store will be useless!")
+        return
+
     sub  = df[_COLS].where(pd.notna(df[_COLS]), None)
     rows = [tuple(r) for r in sub.itertuples(index=False, name=None)]
     bulk_insert(_INSERT, rows)

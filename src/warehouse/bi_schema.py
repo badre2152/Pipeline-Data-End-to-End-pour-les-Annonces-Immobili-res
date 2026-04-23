@@ -83,6 +83,11 @@ def _upsert_localisation(cur, ville: str, quartier: str) -> int:
 
 
 def _upsert_caracteristiques(cur, nb_ch, nb_sb, etage, annee, age) -> int:
+    # ✅ FIX: replace NULL with -1 so ON CONFLICT works in PostgreSQL
+    nb_ch = nb_ch if nb_ch is not None else -1
+    nb_sb = nb_sb if nb_sb is not None else -1
+    annee = annee if annee is not None else -1
+
     cur.execute(
         """
         INSERT INTO bi_schema.dim_caracteristiques
@@ -151,42 +156,46 @@ def run_bi_schema(df: pd.DataFrame | None = None):
     try:
         with conn:
             for _, row in df.iterrows():
-                with conn.cursor() as cur:
-                    id_loc = _upsert_localisation(
-                        cur, row.get("ville"), row.get("quartier")
-                    )
-                    id_car = _upsert_caracteristiques(
-                        cur,
-                        row.get("nb_chambres"),
-                        row.get("nb_salles_bain"),
-                        row.get("etage"),
-                        row.get("annee_construction"),
-                        row.get("age_bien"),
-                    )
-                    id_tps = _upsert_temps(cur, row.get("scraped_at"))
+                try:
+                    with conn.cursor() as cur:
+                        id_loc = _upsert_localisation(
+                            cur, row.get("ville"), row.get("quartier")
+                        )
+                        id_car = _upsert_caracteristiques(
+                            cur,
+                            row.get("nb_chambres"),
+                            row.get("nb_salles_bain"),
+                            row.get("etage"),
+                            row.get("annee_construction"),
+                            row.get("age_bien"),
+                        )
+                        id_tps = _upsert_temps(cur, row.get("scraped_at"))
 
-                    def _val(v):
-                        return None if pd.isna(v) else v
+                        def _val(v):
+                            return None if pd.isna(v) else v
 
-                    cur.execute(
-                        """
-                        INSERT INTO bi_schema.fact_annonce
-                            (id_localisation, id_caracteristiques, id_temps,
-                             titre, prix, surface_m2, prix_par_m2,
-                             categorie_prix, lien)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                        """,
-                        (
-                            id_loc, id_car, id_tps,
-                            row.get("titre"),
-                            _val(row.get("prix")),
-                            _val(row.get("surface_m2")),
-                            _val(row.get("prix_par_m2")),
-                            row.get("categorie_prix"),
-                            row.get("lien"),
-                        ),
-                    )
-                count += 1
+                        cur.execute(
+                            """
+                            INSERT INTO bi_schema.fact_annonce
+                                (id_localisation, id_caracteristiques, id_temps,
+                                 titre, prix, surface_m2, prix_par_m2,
+                                 categorie_prix, lien)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            """,
+                            (
+                                id_loc, id_car, id_tps,
+                                row.get("titre"),
+                                _val(row.get("prix")),
+                                _val(row.get("surface_m2")),
+                                _val(row.get("prix_par_m2")),
+                                row.get("categorie_prix"),
+                                row.get("lien"),
+                            ),
+                        )
+                    count += 1
+                except Exception as e:
+                    logger.warning(f"Skipping row due to error: {e}")  # ✅ FIX: skip failed row only
+                    continue
     finally:
         conn.close()
 

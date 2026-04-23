@@ -43,11 +43,13 @@ VALUES %s
 def _latest_bronze_file() -> str | None:
     if not os.path.exists(BRONZE_DIR):
         return None
-    files = sorted(
-        [f for f in os.listdir(BRONZE_DIR) if f.endswith(".json")],
-        reverse=True,
-    )
-    return os.path.join(BRONZE_DIR, files[0]) if files else None
+    files = []
+    for root, dirs, filenames in os.walk(BRONZE_DIR):  # ✅ FIX: recursive search
+        for f in filenames:
+            if f.endswith(".json"):
+                files.append(os.path.join(root, f))
+    files = sorted(files, reverse=True)
+    return files[0] if files else None
 
 
 def run_staging(records: list[dict] | None = None):
@@ -85,6 +87,7 @@ def run_staging(records: list[dict] | None = None):
             r.get("scraped_at"),
         )
         for r in records
+        if r.get("error") is None  # ✅ FIX: skip failed records
     ]
 
     bulk_insert(_INSERT, rows)

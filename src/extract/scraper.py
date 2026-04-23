@@ -28,43 +28,41 @@ from src.utils.logger import get_logger
 
 logger = get_logger("scraper")
 
-# 🔴 FIX 1: BASE_URL corrected to Avito.ma (was books.toscrape.com)
+
 BASE_URL   = "https://www.avito.ma/fr/maroc/immobilier"
-MAX_PAGES  = 1
-DELAY_MIN  = 3
-DELAY_MAX  = 7
+MAX_PAGES  = 5
+DELAY_MIN  = 2.0
+DELAY_MAX  = 4.0
 BRONZE_DIR = os.path.join(os.path.dirname(__file__), "../../data/bronze")
 
 
 # ── Driver ────────────────────────────────────────────────────────────────────
 
 def _build_driver() -> webdriver.Chrome:
-    from webdriver_manager.chrome import ChromeDriverManager
-
     options = Options()
-
-    
-    options.binary_location = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-
-    # Headless config (stable version)
-    options.add_argument("--headless=new")
-
+    options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
-
     options.add_argument(
-    "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/120.0.0.0 Safari/537.36"
+        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
     )
 
-    driver = webdriver.Chrome(
-        service=Service(ChromeDriverManager().install()),
-        options=options
-    )
-
+    chromium_bin = "/usr/bin/chromium"
+    if os.path.exists(chromium_bin):
+        options.binary_location = chromium_bin
+        driver = webdriver.Chrome(
+            service=Service("/usr/bin/chromedriver"), options=options
+        )
+    else:
+        from webdriver_manager.chrome import ChromeDriverManager
+        driver = webdriver.Chrome(
+            service=Service(ChromeDriverManager().install()), options=options
+        )
+    driver.set_page_load_timeout(30)  
     return driver
 
 
@@ -82,10 +80,10 @@ def _get_listing_urls(driver, page_url: str) -> list[str]:
     try:
         driver.get(page_url)
         WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/annonces/']"))
+            EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/fr/maroc/']"))  
         )
         seen = set()
-        for a in driver.find_elements(By.CSS_SELECTOR, "a[href*='/annonces/']"):
+        for a in driver.find_elements(By.CSS_SELECTOR, "a[href*='/fr/maroc/']"):  
             href = a.get_attribute("href")
             if href and href not in seen:
                 seen.add(href)
@@ -111,7 +109,7 @@ def _scrape_listing(driver, url: str) -> dict:
         "annee_construction": "",
         "lien":               url,
         "scraped_at":         datetime.utcnow().isoformat(),
-        # 🔴 FIX 2: error field added to track timeout/failures clearly
+        
         "error":              None,
     }
     try:
@@ -121,47 +119,33 @@ def _scrape_listing(driver, url: str) -> dict:
         )
 
         record["titre"] = _safe_text(driver, "h1")
-        record["prix"]  = _safe_text(
-            driver, "[class*='price'] span, [data-testid='price']"
-        )
+        record["prix"]  = _safe_text(driver, "p[font-weight='bold']")  
 
-        # Location from breadcrumb
-        loc_els = driver.find_elements(
-            By.CSS_SELECTOR,
-            "[class*='breadcrumb'] a, [class*='location'] span",
-        )
-        if len(loc_els) >= 2:
-            record["ville"]    = loc_els[-2].text.strip()
-            record["quartier"] = loc_els[-1].text.strip()
-        elif len(loc_els) == 1:
-            record["ville"] = loc_els[0].text.strip()
+        
+        ville_text = _safe_text(driver, "span[class*='sc-16573058-17']")
+        if ville_text:
+            parts = ville_text.split(",")
+            if len(parts) >= 2:
+                record["ville"]    = parts[-1].strip()   
+                record["quartier"] = parts[0].strip()    
+            else:
+                record["ville"] = ville_text.strip()
 
-        # Attribute items (surface, rooms, floor, year …)
-        for item in driver.find_elements(
-            By.CSS_SELECTOR,
-            "[class*='attribute'], [class*='detail'] li, [class*='param'] li",
-        ):
-            txt = item.text.lower()
-            if "surface" in txt or "m²" in txt or "m2" in txt:
-                record["surface"] = item.text.strip()
-            elif "chambre" in txt or "pièce" in txt:
-                record["nb_chambres"] = item.text.strip()
-            elif "bain" in txt or "salle" in txt:
-                record["nb_salles_bain"] = item.text.strip()
-            elif "étage" in txt or "etage" in txt:
-                record["etage"] = item.text.strip()
-            elif "année" in txt or "construction" in txt:
-                record["annee_construction"] = item.text.strip()
+        
+        record["surface"]       = _safe_text(driver, "span[title='Surface totale']")
+        record["nb_chambres"]   = _safe_text(driver, "span[title='Chambres']")
+        record["nb_salles_bain"]= _safe_text(driver, "span[title='Salle de bain']")
+        record["etage"]         = _safe_text(driver, "span[title='Étage']")
 
         logger.debug(f"Scraped: {record['titre'][:60]}")
 
     except TimeoutException:
         logger.warning(f"Timeout on listing: {url}")
-        record["error"] = "timeout"  # 🔴 FIX 2: mark clearly instead of silent fail
+        record["error"] = "timeout"  
 
     except Exception as e:
         logger.error(f"Error scraping {url}: {e}")
-        record["error"] = str(e)  # 🔴 FIX 2: capture the error message
+        record["error"] = str(e)  
 
     return record
 
@@ -171,7 +155,7 @@ def _scrape_listing(driver, url: str) -> dict:
 def _save_bronze(records: list[dict], page_num: int) -> str:
     today = datetime.utcnow()
 
-    # 🔴 FIX 3: use BRONZE_DIR consistently (was hardcoded "data/bronze/...")
+    
     path = os.path.join(
         BRONZE_DIR,
         f"{today.year}/{today.month:02d}/{today.day:02d}"
@@ -197,7 +181,7 @@ def check_schema(record: dict) -> bool:
 
 
 def check_content(record: dict) -> bool:
-    # 🔴 FIX 5: named exception instead of bare except
+    
     try:
         if not record.get("titre") or len(record["titre"]) < 5:
             return False
@@ -212,8 +196,7 @@ def check_content(record: dict) -> bool:
 
 
 def check_business_rules(record: dict) -> bool:
-    # 🔴 FIX 4: stricter price validation using regex (min 3 digits)
-    # 🔴 FIX 5: named exception instead of bare except
+    
     try:
         prix = str(record.get("prix", ""))
         if not re.search(r'\d{3,}', prix):
@@ -234,18 +217,18 @@ def is_valid_record(record: dict) -> bool:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-def run_scraper(max_pages: int = MAX_PAGES) -> list[dict]:  # 🔴 FIX 6: will now return data
+def run_scraper(max_pages: int = MAX_PAGES) -> list[dict]:  
     logger.info("=== Scraper started ===")
     driver = _build_driver()
 
     total_records  = 0
     valid_records  = 0
     invalid_records = 0
-    all_records    = []  # 🔴 FIX 6: collect all pages to return at the end
+    all_records    = []  
 
     try:
         for page_num in range(1, max_pages + 1):
-            page_url = f"{BASE_URL}?o={page_num}"  # Avito uses ?o= for pagination
+            page_url = f"{BASE_URL}?o={page_num}"  
             logger.info(f"── Page {page_num}/{max_pages}")
 
             listing_urls = _get_listing_urls(driver, page_url)
@@ -254,13 +237,13 @@ def run_scraper(max_pages: int = MAX_PAGES) -> list[dict]:  # 🔴 FIX 6: will n
                 logger.warning("No listings found — stopping pagination.")
                 break
 
-            page_records = []  # reset per page
+            page_records = []  
 
             for url in listing_urls:
-                record = _scrape_listing(driver, url)  # create first
+                record = _scrape_listing(driver, url)  
                 total_records += 1
 
-                if is_valid_record(record):              # then validate
+                if is_valid_record(record):              
                     page_records.append(record)
                     valid_records += 1
                 else:
@@ -278,8 +261,8 @@ def run_scraper(max_pages: int = MAX_PAGES) -> list[dict]:  # 🔴 FIX 6: will n
                 f"--------------------------------"
             )
 
-            _save_bronze(page_records, page_num)        # save after each page
-            all_records.extend(page_records)            # 🔴 FIX 6: accumulate
+            _save_bronze(page_records, page_num)        
+            all_records.extend(page_records)            
 
     except WebDriverException as e:
         logger.error(f"WebDriver fatal error: {e}")
@@ -289,4 +272,4 @@ def run_scraper(max_pages: int = MAX_PAGES) -> list[dict]:  # 🔴 FIX 6: will n
         logger.info("WebDriver closed.")
 
     logger.info("=== Scraper finished ===")
-    return all_records  # 🔴 FIX 6: actually return the collected data
+    return all_records  

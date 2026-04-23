@@ -69,7 +69,7 @@ def run_pipeline():
 
     try:
         # 1 — Extract
-        raw = _run("EXTRACT", run_scraper, max_pages=10)
+        raw = _run("EXTRACT", run_scraper, max_pages=1)
 
         # 2 — Staging
         _run("STAGING", run_staging, raw)
