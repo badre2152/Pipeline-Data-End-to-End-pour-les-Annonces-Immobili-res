@@ -63,11 +63,11 @@ pip install -r requirements.txt
 
 Copier `.env` et ajuster si nécessaire :
 ```
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=avito_db
-DB_USER=avito_user
-DB_PASSWORD=avito_pass
+DB_HOST=
+DB_PORT=
+DB_NAME=
+DB_USER=
+DB_PASSWORD=
 ```
 
 ---
