@@ -1,10 +1,3 @@
-"""
-Staging layer — loads raw scraped records into staging.raw_annonces.
-Data is stored as-is (all TEXT); no transformation happens here.
-
-ADDED: initial QC report — null counts and fill rates per field.
-"""
-
 import json
 import os
 from src.utils.db import execute_query, bulk_insert
@@ -60,18 +53,18 @@ def _latest_bronze_file() -> str | None:
 
 
 def _qc_report(records: list[dict]):
-    """Log a fill-rate report for every field — initial quality control."""
+    
     n = len(records)
     if n == 0:
         logger.warning("QC Report: 0 records — nothing to analyse.")
         return
 
-    lines = [f"\n📋 STAGING QC REPORT — {n} records"]
+    lines = [f"\n STAGING QC REPORT — {n} records"]
     for field in _FIELDS:
         filled = sum(1 for r in records if r.get(field) and str(r[field]).strip())
         missing = n - filled
         pct = 100 * filled // n
-        status = "✅" if pct >= 80 else ("⚠️" if pct >= 40 else "❌")
+        status = "!" if pct >= 80 else ("!" if pct >= 40 else "!")
         lines.append(
             f"  {status} {field:<22}: {filled}/{n} filled ({pct}%) — {missing} missing"
         )
@@ -98,7 +91,7 @@ def run_staging(records: list[dict] | None = None):
         logger.warning("Empty record list — nothing to insert.")
         return
 
-    # Initial QC report before insert
+    
     _qc_report(records)
 
     rows = [
@@ -116,7 +109,7 @@ def run_staging(records: list[dict] | None = None):
             r.get("scraped_at"),
         )
         for r in records
-        if r.get("error") is None   # skip failed scrapes
+        if r.get("error") is None   
     ]
 
     bulk_insert(_INSERT, rows)
