@@ -35,7 +35,7 @@ IMMOBILIER_KEYWORDS = [
     "villas", "terrains", "appartements",
 ]
 
-# ── FIX 1: Expanded false-positive exclusion list for location parsing ────────
+
 LOCATION_FALSE_POSITIVES = [
     "vendre", "louer", "categorie", "annonce",
     "immobilier", "appartement", "appartements",
@@ -137,23 +137,21 @@ def _scrape_listing(driver, url: str) -> dict:
         record["titre"] = _safe_text(driver, "h1")
 
         # ── Prix ───────────────────────────────────────────────────────────
-        # Real format: '2 330 000 DH' — appears in multiple spans
-        # We grab all short texts and find the one matching price pattern
+        
         for el in driver.find_elements(By.CSS_SELECTOR, "span, p"):
             try:
                 txt = el.text.strip()
             except StaleElementReferenceException:
                 continue
-            # Match: digits + optional spaces/narrow-spaces + DH
+            
             if re.search(r'[\d\s\u202f]+DH', txt) and len(txt) < 30:
-                # Skip the monthly financing line
+                
                 if "mois" not in txt.lower():
                     record["prix"] = txt
                     break
 
         # ── Localisation ───────────────────────────────────────────────────
-        # FIX 1: Expanded exclusion list + both sides of comma must be non-empty
-        # Real format: 'Guéliz, Marrakech' in a single element
+        
         for el in driver.find_elements(By.CSS_SELECTOR, "span, p, a"):
             try:
                 txt = el.text.strip()
@@ -162,15 +160,13 @@ def _scrape_listing(driver, url: str) -> dict:
             if "," in txt and 3 < len(txt) < 50:
                 if not any(w in txt.lower() for w in LOCATION_FALSE_POSITIVES):
                     parts = [p.strip() for p in txt.split(",")]
-                    if len(parts) == 2 and all(parts):  # both sides non-empty
+                    if len(parts) == 2 and all(parts):  
                         record["quartier"] = parts[0]
                         record["ville"]    = parts[1]
                         break
 
         # ── Attributs ──────────────────────────────────────────────────────
-        # FIX 2: Strip empty parts from newline split before checking length
-        # This fixes annee_construction = 0% caused by trailing newlines
-        # e.g. "2018\nAnnée de construction\n " was producing 3 parts → skipped
+        
         for el in driver.find_elements(By.CSS_SELECTOR, "span, div, p"):
             try:
                 txt = el.text.strip()
@@ -180,7 +176,7 @@ def _scrape_listing(driver, url: str) -> dict:
             if "\n" not in txt or len(txt) > 60:
                 continue
 
-            # Filter out empty/whitespace-only parts before checking count
+            
             parts = [p.strip() for p in txt.split("\n") if p.strip()]
             if len(parts) != 2:
                 continue
@@ -230,8 +226,7 @@ def _save_bronze(records: list[dict]) -> str:
 # ── Fill rate monitor ─────────────────────────────────────────────────────────
 
 def _log_fill_rates(records: list[dict]) -> None:
-    """FIX 3: Warn early when key fields have low fill rates before data
-    reaches the warehouse. Catches scraping regressions immediately."""
+    
     if not records:
         return
     total = len(records)
@@ -324,7 +319,7 @@ def run_scraper(max_pages: int = MAX_PAGES) -> list[dict]:
 
     _save_bronze(all_records)
 
-    # FIX 3: Log fill rates so regressions are caught before hitting the warehouse
+    
     _log_fill_rates(all_records)
 
     logger.info(f"=== Scraper finished — {len(all_records)} records ===")
