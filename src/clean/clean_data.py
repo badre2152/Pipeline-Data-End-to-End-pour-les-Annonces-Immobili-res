@@ -1,8 +1,3 @@
-"""
-Clean layer — reads from staging.raw_annonces, applies full cleaning
-+ feature engineering, writes to clean.annonces and data/silver/.
-"""
-
 import re
 import os
 from datetime import datetime
@@ -43,7 +38,6 @@ CREATE TABLE IF NOT EXISTS clean.annonces (
 );
 """
 
-# ✅ MIGRATION: يضيف الأعمدة الجديدة إذا كان الجدول موجوداً بدونها
 _DDL_MIGRATIONS = [
     "ALTER TABLE clean.annonces ADD COLUMN IF NOT EXISTS region_label TEXT;",
     "ALTER TABLE clean.annonces ADD COLUMN IF NOT EXISTS is_grande_ville BOOLEAN;",
@@ -250,14 +244,14 @@ def _ml_readiness_report(df: pd.DataFrame):
     if n == 0:
         logger.warning("ML Readiness: 0 rows — cannot compute.")
         return
-    lines = [f"\n🤖 ML READINESS REPORT — {n} rows"]
+    lines = [f"\n ML READINESS REPORT — {n} rows"]
     for col in feature_cols:
         if col not in df.columns:
             lines.append(f"  ❓ {col:<22}: column not found")
             continue
         null_count = df[col].isna().sum()
         fill_pct   = 100 * (n - null_count) // n
-        status = "✅" if fill_pct >= 80 else ("⚠️" if fill_pct >= 40 else "❌")
+        status = "✅" if fill_pct >= 80 else ("!" if fill_pct >= 40 else "!")
         lines.append(f"  {status} {col:<22}: {n - null_count}/{n} filled ({fill_pct}%)")
     logger.info("\n".join(lines))
 
@@ -273,7 +267,7 @@ def _save_silver(df: pd.DataFrame):
 def _load_to_db(df: pd.DataFrame):
     execute_query(_DDL_SCHEMA)
     execute_query(_DDL_TABLE)
-    # ✅ MIGRATION: يضيف الأعمدة الجديدة إذا كان الجدول موجوداً بدونها
+    
     for migration in _DDL_MIGRATIONS:
         try:
             execute_query(migration)
