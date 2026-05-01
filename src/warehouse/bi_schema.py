@@ -1,7 +1,3 @@
-"""
-BI Schema — Star Schema for Power BI / reporting.
-"""
-
 import numpy as np
 import pandas as pd
 from datetime import datetime
@@ -63,12 +59,12 @@ _DDL = [
     "CREATE INDEX IF NOT EXISTS idx_fact_prix ON bi_schema.fact_annonce(prix);",
 ]
 
-# ✅ MIGRATION: يضيف الأعمدة الجديدة إذا كان الجدول موجوداً بدونها
+
 _DDL_MIGRATIONS = [
     "ALTER TABLE bi_schema.dim_localisation ADD COLUMN IF NOT EXISTS region_label TEXT NOT NULL DEFAULT 'Autre';",
     "ALTER TABLE bi_schema.dim_localisation ADD COLUMN IF NOT EXISTS is_grande_ville BOOLEAN NOT NULL DEFAULT FALSE;",
     "ALTER TABLE bi_schema.fact_annonce ADD COLUMN IF NOT EXISTS lien TEXT;",
-    # UNIQUE constraint على lien — يُضاف فقط إذا لم يكن موجوداً
+    
     """DO $$ BEGIN
         IF NOT EXISTS (
             SELECT 1 FROM pg_constraint
@@ -233,7 +229,7 @@ def run_bi_schema(df: pd.DataFrame | None = None):
     for stmt in _DDL:
         execute_query(stmt)
 
-    # ✅ MIGRATION
+    
     for migration in _DDL_MIGRATIONS:
         try:
             execute_query(migration)
@@ -247,14 +243,14 @@ def run_bi_schema(df: pd.DataFrame | None = None):
         logger.info(f"Loaded {len(df)} rows from clean.annonces")
 
     conn    = get_connection()
-    count   = 0  # rows cleanly committed via RELEASE SAVEPOINT
-    skipped = 0  # rows rolled back via ROLLBACK TO SAVEPOINT
+    count   = 0  
+    skipped = 0  
 
     def _val(v):
         return None if pd.isna(v) else v
 
     try:
-        with conn:                          # ONE transaction — commits on exit
+        with conn:                          
             cur = conn.cursor()
 
             for i, (_, row) in enumerate(df.iterrows()):
@@ -299,19 +295,19 @@ def run_bi_schema(df: pd.DataFrame | None = None):
                         ),
                     )
 
-                    # Row fully inserted — lock it in and move on
+                    
                     cur.execute(f"RELEASE SAVEPOINT {savepoint}")
                     count += 1
 
                 except Exception as e:
-                    # Roll back only this row — transaction stays alive
+                    
                     cur.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
                     cur.execute(f"RELEASE SAVEPOINT {savepoint}")
                     skipped += 1
                     logger.warning(f"Row {i} skipped — rolled back cleanly: {e}")
 
             cur.close()
-        # ← with conn: exits here → COMMIT (all released savepoints are persisted)
+        
 
     finally:
         conn.close()
