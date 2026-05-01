@@ -1,15 +1,8 @@
-"""
-Scraper for Avito.ma — immobilier listings.
-Collects ONLY non-personal, publicly visible real-estate data.
-No names, phone numbers, or emails are ever scraped.
-Polite crawling: random delay 2–4s between requests.
-"""
-
-import re
 import time
 import json
 import os
 import random
+import re
 from datetime import datetime
 
 from selenium import webdriver
@@ -22,18 +15,34 @@ from selenium.common.exceptions import (
     TimeoutException,
     NoSuchElementException,
     WebDriverException,
+    InvalidSessionIdException,
+    StaleElementReferenceException,
 )
 
 from src.utils.logger import get_logger
 
 logger = get_logger("scraper")
 
-# 🔴 FIX 1: BASE_URL corrected to Avito.ma (was books.toscrape.com)
 BASE_URL   = "https://www.avito.ma/fr/maroc/immobilier"
 MAX_PAGES  = 1
 DELAY_MIN  = 2.0
 DELAY_MAX  = 4.0
 BRONZE_DIR = os.path.join(os.path.dirname(__file__), "../../data/bronze")
+
+IMMOBILIER_KEYWORDS = [
+    "appartement", "maison", "villa", "terrain",
+    "bureau", "riad", "local", "ferme", "immobilier",
+    "villas", "terrains", "appartements",
+]
+
+# ── FIX 1: Expanded false-positive exclusion list for location parsing ────────
+LOCATION_FALSE_POSITIVES = [
+    "vendre", "louer", "categorie", "annonce",
+    "immobilier", "appartement", "appartements",
+    "maison", "maisons", "villa", "villas",
+    "terrain", "terrains", "bureau", "riad",
+    "local", "ferme", "résidentiel", "commercial",
+]
 
 
 # ── Driver ────────────────────────────────────────────────────────────────────
@@ -45,6 +54,8 @@ def _build_driver() -> webdriver.Chrome:
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--js-flags=--max-old-space-size=512")
     options.add_argument(
         "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -62,7 +73,8 @@ def _build_driver() -> webdriver.Chrome:
         driver = webdriver.Chrome(
             service=Service(ChromeDriverManager().install()), options=options
         )
-    driver.set_page_load_timeout(30)  # ✅ FIX: prevent infinite hang
+
+    driver.set_page_load_timeout(30)
     return driver
 
 
@@ -71,16 +83,8 @@ def _build_driver() -> webdriver.Chrome:
 def _safe_text(driver, css: str, default: str = "") -> str:
     try:
         return driver.find_element(By.CSS_SELECTOR, css).text.strip()
-    except NoSuchElementException:
+    except (NoSuchElementException, StaleElementReferenceException):
         return default
-
-
-# ── Immobilier URL keywords ───────────────────────────────────────────────────
-
-IMMOBILIER_KEYWORDS = [
-    "immobilier", "appartement", "maison",
-    "villa", "terrain", "bureau", "riad", "local", "ferme"
-]
 
 
 def _get_listing_urls(driver, page_url: str) -> list[str]:
@@ -88,13 +92,16 @@ def _get_listing_urls(driver, page_url: str) -> list[str]:
     try:
         driver.get(page_url)
         WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "a[href$='.htm']"))  # ✅ FIX: listing URLs end with .htm
+            EC.presence_of_element_located((By.CSS_SELECTOR, "a[href$='.htm']"))
         )
         seen = set()
-        for a in driver.find_elements(By.CSS_SELECTOR, "a[href$='.htm']"):  # ✅ FIX
-            href = a.get_attribute("href")
+        for a in driver.find_elements(By.CSS_SELECTOR, "a[href$='.htm']"):
+            try:
+                href = a.get_attribute("href")
+            except StaleElementReferenceException:
+                continue
             if href and href not in seen:
-                if any(kw in href for kw in IMMOBILIER_KEYWORDS):  # ✅ FIX: immobilier only
+                if any(kw in href for kw in IMMOBILIER_KEYWORDS):
                     seen.add(href)
                     urls.append(href)
         logger.info(f"Page {page_url} → {len(urls)} listings found.")
@@ -118,7 +125,6 @@ def _scrape_listing(driver, url: str) -> dict:
         "annee_construction": "",
         "lien":               url,
         "scraped_at":         datetime.utcnow().isoformat(),
-        # 🔴 FIX 2: error field added to track timeout/failures clearly
         "error":              None,
     }
     try:
@@ -127,159 +133,199 @@ def _scrape_listing(driver, url: str) -> dict:
             EC.presence_of_element_located((By.CSS_SELECTOR, "h1"))
         )
 
+        # ── Titre ──────────────────────────────────────────────────────────
         record["titre"] = _safe_text(driver, "h1")
-        record["prix"]  = _safe_text(driver, "p[font-weight='bold']")  # ✅ FIX: stable attribute
 
-        # Location — "Toute la ville, Martil" or "Hay Riad, Rabat"
-        ville_text = _safe_text(driver, "span[class*='sc-16573058-17']")
-        if ville_text:
-            parts = ville_text.split(",")
-            if len(parts) >= 2:
-                record["ville"]    = parts[-1].strip()   # ✅ "Martil"
-                record["quartier"] = parts[0].strip()    # ✅ "Toute la ville" or "Hay Riad"
-            else:
-                record["ville"] = ville_text.strip()
+        # ── Prix ───────────────────────────────────────────────────────────
+        # Real format: '2 330 000 DH' — appears in multiple spans
+        # We grab all short texts and find the one matching price pattern
+        for el in driver.find_elements(By.CSS_SELECTOR, "span, p"):
+            try:
+                txt = el.text.strip()
+            except StaleElementReferenceException:
+                continue
+            # Match: digits + optional spaces/narrow-spaces + DH
+            if re.search(r'[\d\s\u202f]+DH', txt) and len(txt) < 30:
+                # Skip the monthly financing line
+                if "mois" not in txt.lower():
+                    record["prix"] = txt
+                    break
 
-        # Attribute items — using stable title attributes ✅ FIX
-        record["surface"]       = _safe_text(driver, "span[title='Surface totale']")
-        record["nb_chambres"]   = _safe_text(driver, "span[title='Chambres']")
-        record["nb_salles_bain"]= _safe_text(driver, "span[title='Salle de bain']")
-        record["etage"]         = _safe_text(driver, "span[title='Étage']")
+        # ── Localisation ───────────────────────────────────────────────────
+        # FIX 1: Expanded exclusion list + both sides of comma must be non-empty
+        # Real format: 'Guéliz, Marrakech' in a single element
+        for el in driver.find_elements(By.CSS_SELECTOR, "span, p, a"):
+            try:
+                txt = el.text.strip()
+            except StaleElementReferenceException:
+                continue
+            if "," in txt and 3 < len(txt) < 50:
+                if not any(w in txt.lower() for w in LOCATION_FALSE_POSITIVES):
+                    parts = [p.strip() for p in txt.split(",")]
+                    if len(parts) == 2 and all(parts):  # both sides non-empty
+                        record["quartier"] = parts[0]
+                        record["ville"]    = parts[1]
+                        break
 
-        logger.debug(f"Scraped: {record['titre'][:60]}")
+        # ── Attributs ──────────────────────────────────────────────────────
+        # FIX 2: Strip empty parts from newline split before checking length
+        # This fixes annee_construction = 0% caused by trailing newlines
+        # e.g. "2018\nAnnée de construction\n " was producing 3 parts → skipped
+        for el in driver.find_elements(By.CSS_SELECTOR, "span, div, p"):
+            try:
+                txt = el.text.strip()
+            except StaleElementReferenceException:
+                continue
+
+            if "\n" not in txt or len(txt) > 60:
+                continue
+
+            # Filter out empty/whitespace-only parts before checking count
+            parts = [p.strip() for p in txt.split("\n") if p.strip()]
+            if len(parts) != 2:
+                continue
+
+            value, label = parts[0], parts[1].lower()
+
+            if "surface" in label:
+                record["surface"] = value
+            elif "chambre" in label or "pièce" in label:
+                record["nb_chambres"] = value
+            elif "salle" in label or "bain" in label:
+                record["nb_salles_bain"] = value
+            elif "étage" in label or "etage" in label:
+                record["etage"] = value
+            elif "année" in label or "construction" in label:
+                record["annee_construction"] = value
+
+        logger.debug(
+            f"Scraped: {record['titre'][:50]} | "
+            f"prix={record['prix']} | ville={record['ville']}"
+        )
 
     except TimeoutException:
         logger.warning(f"Timeout on listing: {url}")
-        record["error"] = "timeout"  # 🔴 FIX 2: mark clearly instead of silent fail
-
+        record["error"] = "timeout"
+    except InvalidSessionIdException:
+        raise
     except Exception as e:
         logger.error(f"Error scraping {url}: {e}")
-        record["error"] = str(e)  # 🔴 FIX 2: capture the error message
+        record["error"] = str(e)
 
     return record
 
 
 # ── Bronze persistence ────────────────────────────────────────────────────────
 
-def _save_bronze(records: list[dict], page_num: int) -> str:
-    today = datetime.utcnow()
-
-    # 🔴 FIX 3: use BRONZE_DIR consistently (was hardcoded "data/bronze/...")
-    path = os.path.join(
-        BRONZE_DIR,
-        f"{today.year}/{today.month:02d}/{today.day:02d}"
-    )
-    os.makedirs(path, exist_ok=True)
-
-    file_path = os.path.join(path, f"page_{page_num}.json")
-
-    with open(file_path, "w", encoding="utf-8") as f:
+def _save_bronze(records: list[dict]) -> str:
+    os.makedirs(BRONZE_DIR, exist_ok=True)
+    ts   = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    path = os.path.join(BRONZE_DIR, f"avito_raw_{ts}.json")
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
-
-    logger.info(f"Bronze saved → {file_path} ({len(records)} records)")
-    return file_path
-
-
-# ── Validation ────────────────────────────────────────────────────────────────
-
-REQUIRED_FIELDS = ["titre", "prix", "lien"]
+    logger.info(f"Bronze saved → {path}  ({len(records)} records)")
+    return path
 
 
-def check_schema(record: dict) -> bool:
-    return all(field in record for field in REQUIRED_FIELDS)
+# ── Fill rate monitor ─────────────────────────────────────────────────────────
 
-
-def check_content(record: dict) -> bool:
-    # 🔴 FIX 5: named exception instead of bare except
-    try:
-        if not record.get("titre") or len(record["titre"]) < 5:
-            return False
-        if not record.get("prix"):
-            return False
-        if not record.get("lien"):
-            return False
-        return True
-    except Exception as e:
-        logger.error(f"check_content error: {e}")
-        return False
-
-
-def check_business_rules(record: dict) -> bool:
-    # 🔴 FIX 4: stricter price validation using regex (min 3 digits)
-    # 🔴 FIX 5: named exception instead of bare except
-    try:
-        prix = str(record.get("prix", ""))
-        if not re.search(r'\d{3,}', prix):
-            return False
-        return True
-    except Exception as e:
-        logger.error(f"check_business_rules error: {e}")
-        return False
-
-
-def is_valid_record(record: dict) -> bool:
-    return (
-        check_schema(record)
-        and check_content(record)
-        and check_business_rules(record)
-    )
+def _log_fill_rates(records: list[dict]) -> None:
+    """FIX 3: Warn early when key fields have low fill rates before data
+    reaches the warehouse. Catches scraping regressions immediately."""
+    if not records:
+        return
+    total = len(records)
+    key_fields = [
+        "prix", "ville", "quartier", "surface",
+        "nb_chambres", "nb_salles_bain", "annee_construction",
+    ]
+    for field in key_fields:
+        filled = sum(1 for r in records if r.get(field) not in ("", None))
+        pct = (filled / total) * 100
+        if pct < 80:
+            logger.warning(f"⚠️  Low fill rate: {field} = {pct:.1f}%  ({filled}/{total})")
+        else:
+            logger.info(f"✅ Fill rate: {field} = {pct:.1f}%")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-def run_scraper(max_pages: int = MAX_PAGES) -> list[dict]:  # 🔴 FIX 6: will now return data
+def run_scraper(max_pages: int = MAX_PAGES) -> list[dict]:
     logger.info("=== Scraper started ===")
-    driver = _build_driver()
-
-    total_records  = 0
-    valid_records  = 0
-    invalid_records = 0
-    all_records    = []  # 🔴 FIX 6: collect all pages to return at the end
+    driver      = _build_driver()
+    all_records = []
 
     try:
         for page_num in range(1, max_pages + 1):
-            page_url = f"{BASE_URL}?o={page_num}"  # Avito uses ?o= for pagination
-            logger.info(f"── Page {page_num}/{max_pages}")
+            page_url = f"{BASE_URL}?page={page_num}"
+            logger.info(f"── Results page {page_num}/{max_pages}")
 
-            listing_urls = _get_listing_urls(driver, page_url)
+            listing_urls = []
+            for attempt in range(3):
+                listing_urls = _get_listing_urls(driver, page_url)
+                if listing_urls:
+                    break
+                logger.warning(f"Attempt {attempt + 1}: no URLs found, retrying…")
+                time.sleep(5)
 
             if not listing_urls:
                 logger.warning("No listings found — stopping pagination.")
                 break
 
-            page_records = []  # reset per page
-
             for url in listing_urls:
-                record = _scrape_listing(driver, url)  # create first
-                total_records += 1
+                try:
+                    record = _scrape_listing(driver, url)
 
-                if is_valid_record(record):              # then validate
-                    page_records.append(record)
-                    valid_records += 1
-                else:
-                    invalid_records += 1
-                    logger.warning(f"❌ Invalid record skipped: {record.get('lien')}")
+                except InvalidSessionIdException:
+                    logger.warning("⚠️ Chrome crashed — restarting driver...")
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
+                    driver = _build_driver()
+                    logger.info("✅ Driver restarted — retrying URL...")
+                    try:
+                        record = _scrape_listing(driver, url)
+                    except Exception as retry_exc:
+                        logger.error(f"Retry failed for {url}: {retry_exc}")
+                        record = {
+                            "error": str(retry_exc), "lien": url,
+                            "titre": "", "prix": "", "ville": "",
+                            "quartier": "", "surface": "",
+                            "nb_chambres": "", "nb_salles_bain": "",
+                            "etage": "", "annee_construction": "",
+                            "scraped_at": datetime.utcnow().isoformat(),
+                        }
+
+                except Exception as e:
+                    logger.error(f"Unexpected error on {url}: {e}")
+                    record = {
+                        "error": str(e), "lien": url,
+                        "titre": "", "prix": "", "ville": "",
+                        "quartier": "", "surface": "",
+                        "nb_chambres": "", "nb_salles_bain": "",
+                        "etage": "", "annee_construction": "",
+                        "scraped_at": datetime.utcnow().isoformat(),
+                    }
+
+                if not record.get("error"):
+                    all_records.append(record)
 
                 time.sleep(random.uniform(DELAY_MIN, DELAY_MAX))
 
-            logger.info(
-                f"\n📊 PAGE {page_num} STATS:\n"
-                f"--------------------------------\n"
-                f"Total records:   {total_records}\n"
-                f"Valid records:   {valid_records}\n"
-                f"Invalid records: {invalid_records}\n"
-                f"--------------------------------"
-            )
-
-            _save_bronze(page_records, page_num)        # save after each page
-            all_records.extend(page_records)            # 🔴 FIX 6: accumulate
-
     except WebDriverException as e:
         logger.error(f"WebDriver fatal error: {e}")
-
     finally:
-        driver.quit()
+        try:
+            driver.quit()
+        except Exception:
+            pass
         logger.info("WebDriver closed.")
 
-    logger.info("=== Scraper finished ===")
-    return all_records  # 🔴 FIX 6: actually return the collected data
+    _save_bronze(all_records)
+
+    # FIX 3: Log fill rates so regressions are caught before hitting the warehouse
+    _log_fill_rates(all_records)
+
+    logger.info(f"=== Scraper finished — {len(all_records)} records ===")
+    return all_records
