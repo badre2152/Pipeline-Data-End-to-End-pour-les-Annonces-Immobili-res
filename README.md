@@ -1,67 +1,173 @@
-# Avito Data Pipeline
+# 🚀 Avito Real Estate Data Pipeline
 
-End-to-end data engineering project:
-Scraping → Staging → Cleaning → Data Warehouse → BI + ML
+End-to-end data engineering project that transforms raw real estate listings from **Avito.ma** into analytics-ready datasets and machine learning features.
+---
+## ⚠️ Disclaimer
 
+This project is for educational purposes only.  
+No personal data is collected or stored.  
+Scraping is performed on publicly available listings with respectful rate limiting.
+and all the data will not be shared and will be deleted within 2 weeks
+---
 
+## 🎯 Project Overview
 
-# 🏠 Avito.ma — Data Pipeline
+This project simulates a **production-grade data pipeline**:
 
-Pipeline de données complet pour les annonces immobilières Avito.ma.
+* Extracts real estate listings via web scraping
+* Processes and cleans raw data
+* Loads structured data into a PostgreSQL Data Warehouse
+* Serves analytics (BI) and Machine Learning use cases
+
+---
+
+## 🧱 Architecture
+
+![Architecture](docs/architecture.png)
+
+**Flow:**
 
 ```
-Avito.ma → Scraping → Staging (PostgreSQL) → Clean → Data Warehouse (BI + ML)
+Selenium Scraper
+      ↓
+Bronze Layer (JSON)
+      ↓
+PostgreSQL Staging
+      ↓
+Cleaning & Feature Engineering
+      ↓
+Data Warehouse (Star Schema)
+      ↓
+Power BI Dashboard
+      ↓
+ML Feature Store (OBT)
 ```
 
 ---
 
-## 🗂️ Structure du projet
+## 🛠️ Tech Stack
+
+* **Python** → ETL & scraping
+* **Selenium** → Data extraction
+* **PostgreSQL** → Data warehouse
+* **SQL** → Transformations & analytics
+* **Docker** → Environment orchestration
+* **Streamlit / Power BI** → Data visualization
+
+---
+
+## 📊 Business Use Cases
+
+* Track real estate price trends across cities
+* Compare price per m² by location
+* Identify high-value investment zones
+* Build ML models for price prediction
+
+---
+
+## 🗂️ Project Structure
 
 ```
 data_pipeline/
 ├── data/
-│   ├── bronze/        # JSON bruts issus du scraping
-│   ├── silver/        # CSV nettoyés
-│   └── gold/          # (réservé exports finaux)
+│   ├── bronze/        # Raw JSON data
+│   ├── silver/        # Cleaned CSV data
+│   └── gold/          # Final outputs (BI/ML)
 ├── logs/
 │   └── pipeline.log
 ├── src/
 │   ├── extract/
-│   │   └── scraper.py         ← Selenium scraper (Avito.ma)
 │   ├── staging/
-│   │   └── load_staging.py    ← Chargement brut en base
 │   ├── clean/
-│   │   └── clean_data.py      ← Nettoyage + Feature Engineering
 │   ├── warehouse/
-│   │   ├── bi_schema.py       ← Star Schema (Power BI)
-│   │   └── ml_schema.py       ← OBT Feature Store (ML)
 │   ├── utils/
-│   │   ├── db.py              ← Connexion PostgreSQL
-│   │   └── logger.py          ← Logger centralisé
-│   └── main.py                ← Orchestrateur du pipeline
-├── .env                       ← Variables d'environnement
+│   └── main.py
+├── tests/
+├── docs/
 ├── docker-compose.yml
 ├── Dockerfile
-└── requirements.txt
+├── requirements.txt
+└── .env
 ```
 
 ---
 
-## ⚙️ Installation
+## 🏗️ Data Warehouse Design
 
-### 1. Cloner et préparer l'environnement
+### Schemas
+
+| Schema    | Purpose                   |
+| --------- | ------------------------- |
+| staging   | Raw temporary data        |
+| clean     | Cleaned + enriched data   |
+| bi_schema | Star schema for analytics |
+| ml_schema | Feature store (ML)        |
+
+### ⭐ Star Schema (BI)
+
+```
+fact_annonce
+   ├── dim_localisation
+   ├── dim_caracteristiques
+   └── dim_temps
+```
+
+### 🤖 Feature Store (ML)
+
+```
+feature_store
+→ prix (target)
+→ surface_m2
+→ nb_chambres
+→ prix_par_m2
+→ age_bien
+→ categorie_prix
+```
+
+---
+
+## 🔄 Pipeline Workflow
+
+```
+run_scraper()        → bronze/*.json
+run_staging()        → staging.raw_annonces
+run_clean()          → clean.annonces
+run_bi_schema()      → bi_schema tables
+run_ml_schema()      → ml_schema.feature_store
+_cleanup_staging()   → cleanup
+```
+
+---
+
+## ⚙️ Engineering Highlights
+
+* Idempotent data loading (`ON CONFLICT DO NOTHING`)
+* Retry mechanism (3 attempts)
+* Modular pipeline design
+* Centralized logging system
+* Data validation & type handling
+
+---
+
+## 🐳 Setup & Installation
+
+### 1. Clone repository
 
 ```bash
-git clone <repo>
+git clone <repo_url>
 cd data_pipeline
+```
+
+### 2. Setup environment
+
+```bash
 python -m venv venv
-source venv/bin/activate       # Windows: venv\Scripts\activate
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Configurer les variables d'environnement
+### 3. Configure environment
 
-Copier `.env` et ajuster si nécessaire :
 ```
 DB_HOST=
 DB_PORT=
@@ -72,104 +178,70 @@ DB_PASSWORD=
 
 ---
 
-## 🐳 Lancement via Docker
+## 🚀 Run the Pipeline
 
-### Démarrer uniquement PostgreSQL (recommandé pour le développement)
-
-```bash
-docker-compose up postgres -d
-```
-
-### Lancer le pipeline complet dans Docker
+### Using Docker
 
 ```bash
 docker-compose up --build
 ```
 
----
-
-## 🚀 Lancement local (avec Docker pour la DB)
+### Local execution
 
 ```bash
-# 1. Démarrer la base
 docker-compose up postgres -d
-
-# 2. Activer l'environnement
-source venv/bin/activate
-
-# 3. Lancer le pipeline
 python src/main.py
 ```
 
 ---
 
-## 🏗️ Architecture du Data Warehouse
+## 📊 Dashboard Preview
 
-### Schémas PostgreSQL
-
-| Schéma | Rôle |
-|---|---|
-| `staging` | Données brutes temporaires |
-| `clean` | Données nettoyées + features |
-| `bi_schema` | Star Schema pour Power BI |
-| `ml_schema` | OBT / Feature Store pour le ML |
-
-### BI Schema (Star Schema)
-
-```
-fact_annonce
-    ├── dim_localisation   (ville, quartier)
-    ├── dim_caracteristiques (chambres, sdb, étage, année)
-    └── dim_temps          (date, mois, trimestre, année)
-```
-
-### ML Schema (OBT)
-
-```
-feature_store
-    → prix (target), surface_m2, nb_chambres, nb_salles_bain,
-      ville, quartier, etage, annee_construction,
-      prix_par_m2, age_bien, categorie_prix
-```
-
-> ⚠️ Les transformations ML (scaling, encoding, SMOTE…) se font **après** extraction depuis la base, dans le Brief ML.
+![Dashboard](docs/dashboard.png)
 
 ---
 
-## 🔄 Flux du pipeline
+## 🔌 Power BI Integration
 
-```
-run_scraper()          → bronze/*.json
-    ↓
-run_staging()          → staging.raw_annonces
-    ↓
-run_clean()            → clean.annonces + silver/*.csv
-    ↓
-run_bi_schema()        → bi_schema.fact_annonce + dims
-    ↓
-run_ml_schema()        → ml_schema.feature_store
-    ↓
-_cleanup_staging()     → TRUNCATE staging.raw_annonces
-```
-
-Chaque étape dispose d'un **retry automatique** (3 tentatives, 10s d'intervalle).
+1. Connect to PostgreSQL
+2. Import `bi_schema` tables
+3. Use relationships for analysis
 
 ---
 
-## 🔌 Connexion Power BI
+## 🧪 Testing (Optional)
 
-1. Ouvrir Power BI Desktop
-2. **Obtenir des données** → PostgreSQL
-3. Serveur : `localhost:5432`, Base : `avito_db`
-4. Importer les tables du schéma `bi_schema`
-5. Les relations sont déjà définies via les clés étrangères
+```bash
+pytest
+```
 
 ---
 
-## 🛡️ Conformité & RGPD
+## 🛡️ Data Ethics & Compliance
 
-- ✅ Aucune donnée personnelle collectée (pas de nom, téléphone, email)
-- ✅ Minimisation des données : uniquement les champs nécessaires à l'analyse
-- ✅ Crawling poli : délai aléatoire 2–4s entre chaque requête
-- ✅ Logs de traçabilité à chaque étape
-- ✅ Données limitées aux annonces publiques immobilières
+* No personal data collected
+* Only public listings used
+* Respectful scraping (rate limiting)
+* Full pipeline logging
+
+---
+
+## 🧠 Why This Project Stands Out
+
+* Implements **Medallion Architecture (Bronze/Silver/Gold)**
+* Separates **BI and ML workloads**
+* Uses **Star Schema** for analytics
+* Includes **Feature Store for ML**
+* Designed like a real-world data platform
+
+---
+
+## 👤 Author
+
+**BRAHIM BADRE** – Data Engineering & Analytics Enthusiast
+
+---
+
+## ⭐ Support
+
+If you found this project useful, consider giving it a star ⭐
