@@ -8,6 +8,10 @@ This project is for educational purposes only.
 No personal data is collected or stored.  
 Scraping is performed on publicly available listings with respectful rate limiting.
 and all the data will not be shared and will be deleted within 2 weeks
+
+
+## 📄 License
+This project is licensed under the MIT License.
 ---
 
 ## 🎯 Project Overview
@@ -245,3 +249,6 @@ pytest
 ## ⭐ Support
 
 If you found this project useful, consider giving it a star ⭐
+![Python](https://img.shields.io/badge/python-3.10-blue)
+![Docker](https://img.shields.io/badge/docker-enabled-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
