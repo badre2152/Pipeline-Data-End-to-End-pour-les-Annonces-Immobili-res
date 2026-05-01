@@ -249,6 +249,13 @@ pytest
 ## ⭐ Support
 
 If you found this project useful, consider giving it a star ⭐
+
+
+
 ![Python](https://img.shields.io/badge/python-3.10-blue)
+
+
 ![Docker](https://img.shields.io/badge/docker-enabled-blue)
+
+
 ![License](https://img.shields.io/badge/license-MIT-green)
