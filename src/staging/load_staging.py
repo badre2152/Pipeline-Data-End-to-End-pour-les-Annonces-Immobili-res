@@ -1,6 +1,8 @@
 """
 Staging layer — loads raw scraped records into staging.raw_annonces.
-Data is stored as-is; no transformation happens here.
+Data is stored as-is (all TEXT); no transformation happens here.
+
+ADDED: initial QC report — null counts and fill rates per field.
 """
 
 import json
@@ -39,17 +41,41 @@ INSERT INTO staging.raw_annonces
 VALUES %s
 """
 
+_FIELDS = [
+    "titre", "prix", "ville", "quartier", "surface",
+    "nb_chambres", "nb_salles_bain", "etage", "annee_construction",
+]
+
 
 def _latest_bronze_file() -> str | None:
     if not os.path.exists(BRONZE_DIR):
         return None
     files = []
-    for root, dirs, filenames in os.walk(BRONZE_DIR):  # ✅ FIX: recursive search
+    for root, dirs, filenames in os.walk(BRONZE_DIR):
         for f in filenames:
             if f.endswith(".json"):
                 files.append(os.path.join(root, f))
     files = sorted(files, reverse=True)
     return files[0] if files else None
+
+
+def _qc_report(records: list[dict]):
+    """Log a fill-rate report for every field — initial quality control."""
+    n = len(records)
+    if n == 0:
+        logger.warning("QC Report: 0 records — nothing to analyse.")
+        return
+
+    lines = [f"\n📋 STAGING QC REPORT — {n} records"]
+    for field in _FIELDS:
+        filled = sum(1 for r in records if r.get(field) and str(r[field]).strip())
+        missing = n - filled
+        pct = 100 * filled // n
+        status = "✅" if pct >= 80 else ("⚠️" if pct >= 40 else "❌")
+        lines.append(
+            f"  {status} {field:<22}: {filled}/{n} filled ({pct}%) — {missing} missing"
+        )
+    logger.info("\n".join(lines))
 
 
 def run_staging(records: list[dict] | None = None):
@@ -72,6 +98,9 @@ def run_staging(records: list[dict] | None = None):
         logger.warning("Empty record list — nothing to insert.")
         return
 
+    # Initial QC report before insert
+    _qc_report(records)
+
     rows = [
         (
             r.get("titre"),
@@ -87,7 +116,7 @@ def run_staging(records: list[dict] | None = None):
             r.get("scraped_at"),
         )
         for r in records
-        if r.get("error") is None  # ✅ FIX: skip failed records
+        if r.get("error") is None   # skip failed scrapes
     ]
 
     bulk_insert(_INSERT, rows)
